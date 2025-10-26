@@ -1,0 +1,29 @@
+# Confluence 离线部署工具 - Python 依赖包
+# 用于 download_images.py 和 import_images.py 脚本
+
+# Docker SDK for Python - 用于与 Docker API 交互
+docker>=6.1.0
+
+# PyYAML - 用于解析 docker-compose.yml 文件
+PyYAML>=6.0
+
+# Requests - 用于 HTTP 请求（如果需要）
+requests>=2.31.0
+
+# Rich - 用于美化命令行输出和进度条
+rich>=13.0.0
+
+# Click - 用于命令行参数解析
+click>=8.1.0
+
+# Colorama - 用于跨平台彩色输出
+colorama>=0.4.6
+
+# Concurrent.futures - 用于并发处理（Python 3.2+ 内置，但列出以确保兼容性）
+# futures>=3.4.0  # 仅在 Python 2.7 中需要
+
+# 开发和测试依赖（可选）
+# pytest>=7.0.0
+# pytest-cov>=4.0.0
+# black>=23.0.0
+# flake8>=6.0.0

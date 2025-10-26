@@ -1,0 +1,107 @@
+version: '3.8'
+
+services:
+  confluence:
+    image: haxqer/confluence:9.2.1
+    container_name: confluence-srv
+    restart: unless-stopped
+    ports:
+      - "${CONFLUENCE_PORT:-8090}:8090"
+    volumes:
+      - /var/confluence:/var/atlassian/application-data/confluence
+      - /var/log/confluence:/opt/atlassian/confluence/logs
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - JVM_MINIMUM_MEMORY=${JVM_MINIMUM_MEMORY:-4g}
+      - JVM_MAXIMUM_MEMORY=${JVM_MAXIMUM_MEMORY:-16g}
+      - JVM_CODE_CACHE_ARGS=${JVM_CODE_CACHE_ARGS:--XX:InitialCodeCacheSize=2g -XX:ReservedCodeCacheSize=4g}
+      - ATL_PROXY_NAME=${ATL_PROXY_NAME:-}
+      - ATL_PROXY_PORT=${ATL_PROXY_PORT:-}
+      - ATL_TOMCAT_SCHEME=${ATL_TOMCAT_SCHEME:-http}
+      - ATL_TOMCAT_SECURE=${ATL_TOMCAT_SECURE:-false}
+      - ATL_TOMCAT_CONTEXTPATH=${ATL_TOMCAT_CONTEXTPATH:-}
+      - ATL_DB_TYPE=postgresql
+      - ATL_DB_DRIVER=org.postgresql.Driver
+      - ATL_JDBC_URL=jdbc:postgresql://postgres:5432/${POSTGRES_DB:-confluence}
+      - ATL_JDBC_USER=${POSTGRES_USER:-confluence}
+      - ATL_JDBC_PASSWORD=${POSTGRES_PASSWORD:-confluence123}
+      - ATL_DB_SCHEMA_NAME=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - confluence-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  postgres:
+    image: postgres:15
+    container_name: postgres-confluence
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - /var/lib/postgresql/data:/var/lib/postgresql/data
+      - /var/log/postgresql:/var/log/postgresql
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - POSTGRES_DB=${POSTGRES_DB:-confluence}
+      - POSTGRES_USER=${POSTGRES_USER:-confluence}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-confluence123}
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=en_US.utf8
+      - POSTGRES_HOST_AUTH_METHOD=md5
+    networks:
+      - confluence-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-confluence} -d ${POSTGRES_DB:-confluence}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=4MB
+      -c min_wal_size=1GB
+      -c max_wal_size=4GB
+      -c max_worker_processes=8
+      -c max_parallel_workers_per_gather=4
+      -c max_parallel_workers=8
+      -c max_parallel_maintenance_workers=4
+      -c log_destination=stderr
+      -c logging_collector=on
+      -c log_directory=/var/log/postgresql
+      -c log_filename=postgresql-%Y-%m-%d_%H%M%S.log
+      -c log_rotation_age=1d
+      -c log_rotation_size=100MB
+      -c log_min_duration_statement=1000
+      -c log_checkpoints=on
+      -c log_connections=on
+      -c log_disconnections=on
+      -c log_lock_waits=on
+
+networks:
+  confluence-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  confluence-data:
+    driver: local
+  postgres-data:
+    driver: local

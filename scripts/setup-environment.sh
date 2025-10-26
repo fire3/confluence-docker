@@ -84,7 +84,9 @@ create_system_directories() {
     local data_dirs=(
         "/var/confluence"
         "/var/lib/mysql"
+        "/var/lib/postgresql/data"
         "/var/log/confluence"
+        "/var/log/postgresql"
     )
     
     for dir in "${data_dirs[@]}"; do
@@ -100,7 +102,9 @@ create_system_directories() {
     chmod 755 "$install_dir"
     chmod 777 "/var/confluence"  # Confluence 容器需要写权限
     chmod 777 "/var/lib/mysql"   # MySQL 容器需要写权限
+    chmod 777 "/var/lib/postgresql"  # PostgreSQL 容器需要写权限
     chmod 755 "/var/log/confluence"
+    chmod 755 "/var/log/postgresql"  # PostgreSQL 日志目录
     
     log_success "系统目录创建完成"
 }
@@ -120,6 +124,18 @@ copy_project_files() {
     if [ -d "$source_dir/confluence_lts" ]; then
         cp -r "$source_dir/confluence_lts" "$target_dir/"
         log_success "复制: confluence_lts/"
+    fi
+    
+    # 复制 PostgreSQL 版本配置（如果存在）
+    if [ -d "$source_dir/confluence_postgresql" ]; then
+        cp -r "$source_dir/confluence_postgresql" "$target_dir/"
+        log_success "复制: confluence_postgresql/"
+    fi
+    
+    # 复制 PostgreSQL 主配置文件（如果存在）
+    if [ -f "$source_dir/docker-compose-postgresql.yml" ]; then
+        cp "$source_dir/docker-compose-postgresql.yml" "$target_dir/"
+        log_success "复制: docker-compose-postgresql.yml"
     fi
     
     # 复制脚本目录
@@ -144,6 +160,7 @@ create_env_file() {
     log_info "创建环境配置文件..."
     
     local env_file="/opt/confluence/.env"
+    local db_type="${1:-mysql}"  # 默认使用 MySQL
     
     cat > "$env_file" << EOF
 # Confluence 环境配置
@@ -154,17 +171,26 @@ JVM_MINIMUM_MEMORY=4g
 JVM_MAXIMUM_MEMORY=16g
 JVM_CODE_CACHE_ARGS=-XX:InitialCodeCacheSize=2g -XX:ReservedCodeCacheSize=4g
 
+# 网络配置
+CONFLUENCE_PORT=8090
+
+# 数据库类型选择: mysql 或 postgresql
+DATABASE_TYPE=$db_type
+
 # MySQL 配置
 MYSQL_ROOT_PASSWORD=123456
 MYSQL_DATABASE=confluence
 MYSQL_USER=confluence
 MYSQL_PASSWORD=123123
 
-# 网络配置
-CONFLUENCE_PORT=8090
+# PostgreSQL 配置
+POSTGRES_DB=confluence
+POSTGRES_USER=confluence
+POSTGRES_PASSWORD=confluence123
+POSTGRES_PORT=5432
 EOF
     
-    log_success "环境配置文件创建: $env_file"
+    log_success "环境配置文件创建: $env_file (数据库类型: $db_type)"
 }
 
 # 配置防火墙
@@ -279,24 +305,47 @@ verify_environment() {
 
 # 显示配置信息
 show_configuration() {
+    local db_type="${1:-mysql}"
+    
     log_info "环境配置信息:"
     echo
     echo "安装目录: /opt/confluence"
     echo "数据目录: /var/confluence"
-    echo "MySQL 数据: /var/lib/mysql"
+    
+    if [ "$db_type" = "mysql" ]; then
+        echo "MySQL 数据: /var/lib/mysql"
+    else
+        echo "PostgreSQL 数据: /var/lib/postgresql/data"
+        echo "PostgreSQL 日志: /var/log/postgresql"
+    fi
+    
     echo "日志目录: /var/log/confluence"
     echo "配置文件: /opt/confluence/.env"
     echo "访问地址: http://localhost:8090"
+    echo "数据库类型: $db_type"
     echo
     echo "下一步操作:"
-    echo "1. 运行测试启动: cd /opt/confluence && ./scripts/start-test.sh"
+    if [ "$db_type" = "mysql" ]; then
+        echo "1. 运行测试启动: cd /opt/confluence && ./scripts/start-test.sh"
+    else
+        echo "1. 运行测试启动: cd /opt/confluence && ./scripts/start-test.sh postgresql"
+    fi
     echo "2. 安装系统服务: ./scripts/install-system.sh"
     echo
 }
 
 # 主函数
 main() {
-    log_info "开始配置 Confluence 运行环境"
+    local db_type="${1:-mysql}"
+    
+    # 验证数据库类型
+    if [[ "$db_type" != "mysql" && "$db_type" != "postgresql" ]]; then
+        log_error "不支持的数据库类型: $db_type"
+        log_error "支持的类型: mysql, postgresql"
+        exit 1
+    fi
+    
+    log_info "开始配置 Confluence 运行环境 (数据库: $db_type)"
     
     # 检查权限
     check_root
@@ -308,7 +357,7 @@ main() {
     # 配置环境
     create_system_directories
     copy_project_files
-    create_env_file
+    create_env_file "$db_type"
     configure_firewall
     configure_system_params
     
@@ -316,7 +365,7 @@ main() {
     verify_environment
     
     # 显示配置信息
-    show_configuration
+    show_configuration "$db_type"
     
     log_success "环境配置完成！"
 }
@@ -326,7 +375,15 @@ show_help() {
     cat << EOF
 Confluence 离线部署 - 环境配置脚本
 
-用法: sudo $0
+用法: sudo $0 [数据库类型]
+
+参数:
+  数据库类型    可选，支持 mysql 或 postgresql，默认为 mysql
+
+示例:
+  sudo $0              # 使用 MySQL 数据库
+  sudo $0 mysql        # 使用 MySQL 数据库
+  sudo $0 postgresql   # 使用 PostgreSQL 数据库
 
 功能:
   - 创建系统目录结构

@@ -64,12 +64,15 @@ check_compose() {
 
 # 检查服务状态
 check_services() {
-    log_info "检查服务状态..."
+    local db_type="${1:-mysql}"
+    log_info "检查服务状态 (数据库: $db_type)..."
     
-    local containers=(
-        "confluence-srv"
-        "mysql-confluence"
-    )
+    local containers=("confluence-srv")
+    if [ "$db_type" = "mysql" ]; then
+        containers+=("mysql-confluence")
+    else
+        containers+=("postgres-confluence")
+    fi
     
     local running_containers=()
     
@@ -94,23 +97,33 @@ check_services() {
 show_current_status() {
     log_info "当前服务状态:"
     echo
-    docker ps --filter "name=confluence" --filter "name=mysql-confluence" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
+    docker ps --filter "name=confluence" --filter "name=mysql-confluence" --filter "name=postgres-confluence" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
     echo
 }
 
 # 停止服务
 stop_services() {
-    log_info "停止 Confluence 服务..."
+    local db_type="${1:-mysql}"
+    local remove_flag="${2:-}"
+    log_info "停止 Confluence 服务 (数据库: $db_type)..."
     
     cd "$PROJECT_DIR"
     
+    # 选择 compose 文件
+    local compose_file
+    if [ "$db_type" = "postgresql" ]; then
+        compose_file="docker-compose-postgresql.yml"
+    else
+        compose_file="docker-compose.yml"
+    fi
+    
     # 停止并移除容器
-    if [ "${1:-}" = "--remove" ]; then
+    if [ "$remove_flag" = "--remove" ]; then
         log_info "停止并移除容器和网络..."
-        $COMPOSE_CMD down
+        $COMPOSE_CMD -f "$compose_file" down
     else
         log_info "停止容器..."
-        $COMPOSE_CMD stop
+        $COMPOSE_CMD -f "$compose_file" stop
     fi
     
     if [ $? -eq 0 ]; then
@@ -123,12 +136,15 @@ stop_services() {
 
 # 验证停止状态
 verify_stopped() {
-    log_info "验证服务停止状态..."
+    local db_type="${1:-mysql}"
+    log_info "验证停止状态 (数据库: $db_type)..."
     
-    local containers=(
-        "confluence-srv"
-        "mysql-confluence"
-    )
+    local containers=("confluence-srv")
+    if [ "$db_type" = "mysql" ]; then
+        containers+=("mysql-confluence")
+    else
+        containers+=("postgres-confluence")
+    fi
     
     local still_running=()
     
@@ -181,17 +197,31 @@ cleanup_resources() {
 
 # 显示停止后信息
 show_stop_info() {
-    log_success "Confluence 测试服务已停止"
+    local db_type="${1:-mysql}"
+    log_success "Confluence 测试服务已停止 (数据库: $db_type)"
     echo
     echo "重新启动服务:"
-    echo "  $SCRIPT_DIR/start-test.sh"
+    if [ "$db_type" = "mysql" ]; then
+        echo "  $SCRIPT_DIR/start-test.sh"
+    else
+        echo "  $SCRIPT_DIR/start-test.sh postgresql"
+    fi
     echo
     echo "完全移除容器和网络:"
-    echo "  $0 --remove"
+    if [ "$db_type" = "mysql" ]; then
+        echo "  $0 --remove"
+    else
+        echo "  $0 postgresql --remove"
+    fi
     echo
     echo "清理系统资源:"
-    echo "  $0 --cleanup"
-    echo "  $0 --cleanup --volumes  # 危险：会删除数据卷"
+    if [ "$db_type" = "mysql" ]; then
+        echo "  $0 --cleanup"
+        echo "  $0 --cleanup --volumes  # 危险：会删除数据卷"
+    else
+        echo "  $0 postgresql --cleanup"
+        echo "  $0 postgresql --cleanup --volumes  # 危险：会删除数据卷"
+    fi
     echo
     echo "查看容器状态:"
     echo "  docker ps -a"
@@ -200,10 +230,56 @@ show_stop_info() {
 
 # 主函数
 main() {
-    local remove_flag="${1:-}"
-    local cleanup_flag="${2:-}"
+    local db_type=""
+    local remove_flag=""
+    local cleanup_flag=""
     
-    log_info "开始停止 Confluence 测试服务"
+    # 解析参数
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            mysql|postgresql)
+                db_type="$1"
+                shift
+                ;;
+            --remove)
+                remove_flag="$1"
+                shift
+                ;;
+            --cleanup)
+                cleanup_flag="$1"
+                shift
+                ;;
+            --volumes)
+                if [[ "$cleanup_flag" == "--cleanup" ]]; then
+                    cleanup_flag="$cleanup_flag $1"
+                fi
+                shift
+                ;;
+            *)
+                # 兼容旧的参数格式
+                if [[ -z "$remove_flag" ]]; then
+                    remove_flag="$1"
+                elif [[ -z "$cleanup_flag" ]]; then
+                    cleanup_flag="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+    
+    # 默认数据库类型
+    if [[ -z "$db_type" ]]; then
+        db_type="mysql"
+    fi
+    
+    log_info "开始停止 Confluence 测试服务 (数据库: $db_type)"
+    
+    # 设置 compose 文件
+    if [ "$db_type" = "postgresql" ]; then
+        export COMPOSE_FILE="docker-compose-postgresql.yml"
+    else
+        export COMPOSE_FILE="docker-compose.yml"
+    fi
     
     # 环境检查
     check_docker
@@ -213,22 +289,22 @@ main() {
     show_current_status
     
     # 检查服务状态
-    if ! check_services; then
+    if ! check_services "$db_type"; then
         log_info "没有运行中的服务需要停止"
         exit 0
     fi
     
     # 停止服务
-    stop_services "$remove_flag"
+    stop_services "$db_type" "$remove_flag"
     
     # 验证停止状态
-    verify_stopped
+    verify_stopped "$db_type"
     
     # 清理资源（如果指定）
     cleanup_resources "$remove_flag" "$cleanup_flag"
     
     # 显示停止后信息
-    show_stop_info
+    show_stop_info "$db_type"
 }
 
 # 显示帮助信息
@@ -236,7 +312,10 @@ show_help() {
     cat << EOF
 Confluence 离线部署 - 测试停止脚本
 
-用法: $0 [选项]
+用法: $0 [数据库类型] [选项]
+
+参数:
+  数据库类型    可选，支持 mysql 或 postgresql，默认为 mysql
 
 选项:
   无参数        停止容器但保留容器和网络
@@ -245,10 +324,12 @@ Confluence 离线部署 - 测试停止脚本
   --volumes     与 --cleanup 一起使用，清理未使用的卷（危险）
 
 示例:
-  $0                    # 仅停止服务
-  $0 --remove           # 停止并移除容器
-  $0 --cleanup          # 停止并清理资源
-  $0 --cleanup --volumes # 停止并清理所有资源（包括数据卷）
+  $0                          # 停止 MySQL 版本服务
+  $0 mysql                    # 停止 MySQL 版本服务
+  $0 postgresql               # 停止 PostgreSQL 版本服务
+  $0 mysql --remove           # 停止并移除 MySQL 版本容器
+  $0 postgresql --cleanup     # 停止 PostgreSQL 版本并清理资源
+  $0 --cleanup --volumes      # 停止并清理所有资源（包括数据卷）
 
 注意:
   使用 --volumes 选项会删除数据，请谨慎使用
